@@ -328,6 +328,13 @@ fn is_test_symbol(sym: &Symbol) -> bool {
         Language::Go => {
             sym.name.starts_with("Test") || sym.file.ends_with("_test.go")
         }
+        Language::Zig => {
+            // Zig tests: test "name" { ... }
+            // Tests often in test/ directories or files with test suffix
+            sym.name.starts_with("test")
+                || sym.file.contains("/test/")
+                || sym.file.ends_with("test.zig")
+        }
         _ => false,
     }
 }

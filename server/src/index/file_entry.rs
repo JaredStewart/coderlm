@@ -22,6 +22,7 @@ pub enum Language {
     Html,
     Css,
     Sql,
+    Zig,
     Other,
 }
 
@@ -45,6 +46,7 @@ impl Language {
             "html" | "htm" => Language::Html,
             "css" | "scss" | "less" => Language::Css,
             "sql" => Language::Sql,
+            "zig" => Language::Zig,
             _ => Language::Other,
         }
     }
@@ -60,7 +62,12 @@ impl Language {
     pub fn has_tree_sitter_support(&self) -> bool {
         matches!(
             self,
-            Language::Rust | Language::Python | Language::TypeScript | Language::JavaScript | Language::Go
+            Language::Rust
+                | Language::Python
+                | Language::TypeScript
+                | Language::JavaScript
+                | Language::Go
+                | Language::Zig
         )
     }
 }

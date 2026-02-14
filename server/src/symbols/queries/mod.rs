@@ -2,6 +2,7 @@ pub mod go;
 pub mod python;
 pub mod rust;
 pub mod typescript;
+pub mod zig;
 
 use crate::index::file_entry::Language;
 
@@ -13,6 +14,7 @@ pub fn get_language_config(lang: Language) -> Option<LanguageConfig> {
         Language::TypeScript => Some(typescript::config()),
         Language::JavaScript => Some(typescript::js_config()),
         Language::Go => Some(go::config()),
+        Language::Zig => Some(zig::config()),
         _ => None,
     }
 }
