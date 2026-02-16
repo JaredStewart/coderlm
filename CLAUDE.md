@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-CoderLM applies the Recursive Language Model (RLM) pattern to codebases. A Rust server indexes a project's files and symbols (via tree-sitter), then exposes a JSON API that LLM agents query for targeted context — structure, symbols, source, callers, tests, grep. An agent skill (`plugin/skills/coderlm/`) wraps the API with a Python CLI and a structured workflow so Claude Code can explore unfamiliar codebases without loading everything into context.
+CodeRLM applies the Recursive Language Model (RLM) pattern to codebases. A Rust server indexes a project's files and symbols (via tree-sitter), then exposes a JSON API that LLM agents query for targeted context — structure, symbols, source, callers, tests, grep. An agent skill (`plugin/skills/coderlm/`) wraps the API with a Python CLI and a structured workflow so Claude Code can explore unfamiliar codebases without loading everything into context.
 
 ## Repository Layout
 

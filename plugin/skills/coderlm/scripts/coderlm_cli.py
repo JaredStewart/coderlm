@@ -39,7 +39,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-STATE_DIR = Path(".claude/coderlm_state")
+STATE_DIR = Path(os.environ.get("CODERLM_STATE_DIR", ".claude/coderlm_state"))
 STATE_FILE = STATE_DIR / "session.json"
 
 

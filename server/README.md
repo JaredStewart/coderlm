@@ -172,15 +172,18 @@ curl localhost:3000/api/v1/history
 
 Symbol extraction (functions, classes, structs, methods, etc.) is available for:
 
-| Language   | Extensions                    |
-|------------|-------------------------------|
-| Rust       | `.rs`                         |
-| Python     | `.py`, `.pyi`                 |
-| TypeScript | `.ts`, `.tsx`                 |
-| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
-| Go         | `.go`                         |
+| Language   | Extensions                    | Support      |
+|------------|-------------------------------|--------------|
+| Rust       | `.rs`                         | tree-sitter  |
+| Python     | `.py`, `.pyi`                 | tree-sitter  |
+| TypeScript | `.ts`, `.tsx`                 | tree-sitter  |
+| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` | tree-sitter  |
+| Go         | `.go`                         | tree-sitter  |
+| Java       | `.java`                       | tree-sitter  |
+| Scala      | `.scala`, `.sc`               | tree-sitter  |
+| SQL        | `.sql`                        | regex        |
 
-All other file types are indexed in the file tree and available for peek/grep/chunk operations, but do not produce symbols.
+Languages with tree-sitter support produce full symbol tables (functions, classes, methods, callers, variables). SQL uses regex fallbacks for variable and definition detection. All other file types are indexed in the file tree and available for peek/grep/chunk operations, but do not produce symbols.
 
 ## API overview
 

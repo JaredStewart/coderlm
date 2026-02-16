@@ -38,63 +38,84 @@ plugin/                          Self-contained Claude Code plugin
 
 ## Quick Start
 
-### Option A: Install as a Claude Code Plugin
+### Prerequisites
 
-The fastest way to get started. Requires Rust toolchain for building the server.
+- **Rust toolchain** — required to build the server (`rustup` recommended)
+- **Python 3** — required for the CLI wrapper (stdlib only, no pip packages)
+
+### 1. Build and Start the Server
 
 ```bash
-# 1. Install the plugin (registers skill, hooks, and slash commands)
-claude plugin install github:JaredStewart/coderlm
-
-# 2. Build the server
-cd ~/.claude/plugins/cache/coderlm/coderlm/latest/server
+git clone https://github.com/JaredStewart/coderlm.git
+cd coderlm/server
 cargo build --release
 
-# 3. Start the server (in a separate terminal)
+# Start the server (in a separate terminal or as a daemon)
 cargo run --release -- serve
 
-# 4. Restart Claude Code — the SessionStart hook will auto-initialize
+# Or run as a daemon
+./coderlm-daemon.sh start
+./coderlm-daemon.sh status
+./coderlm-daemon.sh stop
 ```
 
-After installation, the `/coderlm` skill is available in every Claude Code session. The `UserPromptSubmit` hook guides Claude to use it automatically for code exploration tasks.
-
-### Option B: Install from Source
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/JaredStewart/coderlm.git
-cd coderlm
-
-# 2. Build the server
-cd server && cargo build --release
-
-# 3. Start the server
-cargo run --release -- serve /path/to/your/project
-
-# 4. (Optional) Run as a daemon
-./server/coderlm-daemon.sh start
-./server/coderlm-daemon.sh status
-./server/coderlm-daemon.sh stop
-```
-
-### Verify the Server
+Verify:
 
 ```bash
 curl http://127.0.0.1:3000/api/v1/health
 # → {"status":"ok","projects":0,"active_sessions":0,"max_projects":5}
 ```
 
-### Use with Claude Code
+### 2. Install for Your AI Tool
 
-Once the server is running, invoke the skill:
-
-```
-/coderlm query="how does authentication work?"
-```
-
-Or use the CLI directly:
+#### Claude Code
 
 ```bash
+# Add the marketplace source first, then install the plugin
+claude /plugin marketplace add JaredStewart/coderlm
+claude plugin install coderlm
+```
+
+After installation, the `/coderlm` skill is available in every session. The `SessionStart` hook auto-initializes and the `UserPromptSubmit` hook guides Claude to use indexed lookups.
+
+#### Other AI Platforms (Cursor, Windsurf, Copilot, Gemini, Codex, etc.)
+
+Install the generator:
+
+```bash
+uv tool install coderlm --from git+https://github.com/JaredStewart/coderlm.git
+```
+
+Generate for your platform:
+
+```bash
+coderlm --platform cursor
+coderlm --list                    # see all supported platforms
+```
+
+Or run without installing:
+
+```bash
+uvx --from git+https://github.com/JaredStewart/coderlm.git coderlm --platform cursor
+```
+
+Or from a cloned repo:
+
+```bash
+python3 plugin/generate.py --platform cursor
+```
+
+Use `--list` to see all platforms, `--dry-run` to preview, `--clean` to remove generated files, and `--platform all` for everything.
+
+### 3. Use the CLI
+
+Once the server is running, invoke the skill (Claude Code) or use the CLI directly:
+
+```bash
+# Claude Code
+/coderlm query="how does authentication work?"
+
+# Direct CLI usage
 python3 plugin/skills/coderlm/scripts/coderlm_cli.py init
 python3 plugin/skills/coderlm/scripts/coderlm_cli.py search "handler"
 python3 plugin/skills/coderlm/scripts/coderlm_cli.py impl run_server --file src/main.rs
@@ -103,10 +124,18 @@ python3 plugin/skills/coderlm/scripts/coderlm_cli.py impl run_server --file src/
 ### Updating
 
 ```bash
+# Claude Code plugin
 claude plugin update coderlm
-# Rebuild the server after updating
-cd ~/.claude/plugins/cache/coderlm/coderlm/latest/server
-cargo build --release
+
+# Other platforms — pull and regenerate
+git pull
+python3 plugin/generate.py --platform cursor
+```
+
+Rebuild the server after any update:
+
+```bash
+cd server && cargo build --release
 ```
 
 ## What the Plugin Provides
@@ -132,15 +161,18 @@ Options:
 
 ## Supported Languages
 
-| Language   | Extensions                    |
-|------------|-------------------------------|
-| Rust       | `.rs`                         |
-| Python     | `.py`, `.pyi`                 |
-| TypeScript | `.ts`, `.tsx`                 |
-| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
-| Go         | `.go`                         |
+| Language   | Extensions                    | Support      |
+|------------|-------------------------------|--------------|
+| Rust       | `.rs`                         | tree-sitter  |
+| Python     | `.py`, `.pyi`                 | tree-sitter  |
+| TypeScript | `.ts`, `.tsx`                 | tree-sitter  |
+| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` | tree-sitter  |
+| Go         | `.go`                         | tree-sitter  |
+| Java       | `.java`                       | tree-sitter  |
+| Scala      | `.scala`, `.sc`               | tree-sitter  |
+| SQL        | `.sql`                        | regex        |
 
-All file types appear in the file tree and are searchable via peek/grep, but only the above produce parsed symbols.
+Languages with tree-sitter support produce full symbol tables (functions, classes, methods, callers, variables). SQL uses regex fallbacks for variable and definition detection. All file types appear in the file tree and are searchable via peek/grep.
 
 ## API
 

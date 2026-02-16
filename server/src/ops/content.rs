@@ -239,6 +239,17 @@ fn compute_non_code_ranges(source: &str, language: Language) -> Vec<(usize, usiz
             (raw_string_literal) @skip
             (interpreted_string_literal) @skip
         "#,
+        Language::Java => r#"
+            (line_comment) @skip
+            (block_comment) @skip
+            (string_literal) @skip
+        "#,
+        Language::Scala => r#"
+            (comment) @skip
+            (block_comment) @skip
+            (string) @skip
+            (interpolated_string_expression) @skip
+        "#,
         _ => return Vec::new(),
     };
 
