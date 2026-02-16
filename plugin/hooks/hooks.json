@@ -15,12 +15,20 @@
     ],
     "UserPromptSubmit": [
       {
-        "matcher": "(?i)(how does|what calls|who calls|where does|where is|trace|callers?|execution path|error com|investigate|find the func|find where|understand.*code|explore.*code|map out|navigate|cross.?file|what tests|implementation of|defined in|originat)",
         "hooks": [
           {
-            "type": "prompt",
-            "prompt": "Use the coderlm skill for all code navigation in supported languages (Rust, Python, TypeScript, JavaScript, Go). Use Read only for config files, markdown, and unsupported languages. Do not use Explore, Find, or Grep.",
-            "description": "Reinforce coderlm as primary navigation tool"
+            "type": "command",
+            "command": "echo 'ALWAYS invoke Skill(coderlm) as your FIRST action when working with code in Rust, Python, TypeScript, JavaScript, Go. This includes summarizing, exploring, navigating, tracing, or understanding any codebase. CodeRLM indexes the entire project via tree-sitter and is faster and more accurate than Read/Grep/Glob/Bash for any code comprehension task. Do NOT delegate code tasks to subagents — use coderlm directly from the main agent.'"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SubagentStart\",\"additionalContext\":\"Prefer the coderlm skill over Read/Grep/Glob for semantic code navigation in Rust, Python, TypeScript, JavaScript, Go. Invoke it with Skill(coderlm). CodeRLM provides tree-sitter-indexed symbol lookup, call graphs, and cross-file references.\"}}'"
           }
         ]
       }
