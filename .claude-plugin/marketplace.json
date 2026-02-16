@@ -10,7 +10,7 @@
       "name": "coderlm",
       "source": "./plugin/",
       "description": "Code retrieval server with tree-sitter indexing, cross-file callers, test discovery, and scope-aware grep",
-      "version": "0.1.4"
+      "version": "0.1.5"
     }
   ]
 }

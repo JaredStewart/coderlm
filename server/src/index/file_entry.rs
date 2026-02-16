@@ -11,6 +11,7 @@ pub enum Language {
     JavaScript,
     Go,
     Java,
+    Scala,
     C,
     Cpp,
     Ruby,
@@ -34,6 +35,7 @@ impl Language {
             "js" | "jsx" | "mjs" | "cjs" => Language::JavaScript,
             "go" => Language::Go,
             "java" => Language::Java,
+            "scala" | "sc" => Language::Scala,
             "c" | "h" => Language::C,
             "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" => Language::Cpp,
             "rb" => Language::Ruby,
@@ -61,6 +63,7 @@ impl Language {
         matches!(
             self,
             Language::Rust | Language::Python | Language::TypeScript | Language::JavaScript | Language::Go
+            | Language::Java | Language::Scala
         )
     }
 }

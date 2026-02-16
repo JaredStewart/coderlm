@@ -161,15 +161,18 @@ Options:
 
 ## Supported Languages
 
-| Language   | Extensions                    |
-|------------|-------------------------------|
-| Rust       | `.rs`                         |
-| Python     | `.py`, `.pyi`                 |
-| TypeScript | `.ts`, `.tsx`                 |
-| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
-| Go         | `.go`                         |
+| Language   | Extensions                    | Support      |
+|------------|-------------------------------|--------------|
+| Rust       | `.rs`                         | tree-sitter  |
+| Python     | `.py`, `.pyi`                 | tree-sitter  |
+| TypeScript | `.ts`, `.tsx`                 | tree-sitter  |
+| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` | tree-sitter  |
+| Go         | `.go`                         | tree-sitter  |
+| Java       | `.java`                       | tree-sitter  |
+| Scala      | `.scala`, `.sc`               | tree-sitter  |
+| SQL        | `.sql`                        | regex        |
 
-All file types appear in the file tree and are searchable via peek/grep, but only the above produce parsed symbols.
+Languages with tree-sitter support produce full symbol tables (functions, classes, methods, callers, variables). SQL uses regex fallbacks for variable and definition detection. All file types appear in the file tree and are searchable via peek/grep.
 
 ## API
 

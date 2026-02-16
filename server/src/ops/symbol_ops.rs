@@ -224,7 +224,11 @@ fn find_callers_regex(
                 && (line.contains(&format!("fn {}", symbol_name))
                     || line.contains(&format!("def {}", symbol_name))
                     || line.contains(&format!("function {}", symbol_name))
-                    || line.contains(&format!("func {}", symbol_name)))
+                    || line.contains(&format!("func {}", symbol_name))
+                    || line.contains(&format!("class {}", symbol_name))
+                    || line.contains(&format!("interface {}", symbol_name))
+                    || line.contains(&format!("object {}", symbol_name))
+                    || line.contains(&format!("trait {}", symbol_name)))
             {
                 continue;
             }
@@ -249,6 +253,27 @@ fn is_definition_line(line: &str, name: &str, language: Language) -> bool {
                 || line.contains(&format!("{} =", name))
         }
         Language::Go => line.contains(&format!("func {}", name)),
+        Language::Java => {
+            line.contains(&format!("class {}", name))
+                || line.contains(&format!("interface {}", name))
+                || line.contains(&format!("enum {}", name))
+                || (line.contains(name) && (line.contains("void ") || line.contains("int ")
+                    || line.contains("String ") || line.contains("boolean ")
+                    || line.contains("long ") || line.contains("double ")
+                    || line.contains("float ") || line.contains("public ")
+                    || line.contains("private ") || line.contains("protected ")))
+        }
+        Language::Scala => {
+            line.contains(&format!("def {}", name))
+                || line.contains(&format!("object {}", name))
+                || line.contains(&format!("class {}", name))
+                || line.contains(&format!("trait {}", name))
+        }
+        Language::Sql => {
+            let lower = line.to_lowercase();
+            let lower_name = name.to_lowercase();
+            lower.contains("create") && lower.contains(&lower_name)
+        }
         _ => false,
     }
 }
@@ -328,6 +353,13 @@ fn is_test_symbol(sym: &Symbol) -> bool {
         Language::Go => {
             sym.name.starts_with("Test") || sym.file.ends_with("_test.go")
         }
+        Language::Java => {
+            sym.file.contains("Test") || sym.file.contains("/test/")
+        }
+        Language::Scala => {
+            sym.file.contains("Spec") || sym.file.contains("Test") || sym.file.contains("/test/")
+        }
+        Language::Sql => false,
         _ => false,
     }
 }
@@ -473,6 +505,40 @@ fn list_variables_regex(
             }
             let var_re = regex::Regex::new(r"var\s+(\w+)").unwrap();
             for cap in var_re.captures_iter(body) {
+                variables.push(VariableInfo {
+                    name: cap[1].to_string(),
+                    function: function_name.to_string(),
+                });
+            }
+        }
+        Language::Java => {
+            let var_re = regex::Regex::new(r"\b(?:int|long|float|double|boolean|char|byte|short|String|var|final\s+\w+)\s+(\w+)\s*[=;,)]").unwrap();
+            for cap in var_re.captures_iter(body) {
+                variables.push(VariableInfo {
+                    name: cap[1].to_string(),
+                    function: function_name.to_string(),
+                });
+            }
+        }
+        Language::Scala => {
+            let val_re = regex::Regex::new(r"\b(?:val|var)\s+(\w+)").unwrap();
+            for cap in val_re.captures_iter(body) {
+                variables.push(VariableInfo {
+                    name: cap[1].to_string(),
+                    function: function_name.to_string(),
+                });
+            }
+        }
+        Language::Sql => {
+            let declare_re = regex::Regex::new(r"(?i)DECLARE\s+@?(\w+)").unwrap();
+            for cap in declare_re.captures_iter(body) {
+                variables.push(VariableInfo {
+                    name: cap[1].to_string(),
+                    function: function_name.to_string(),
+                });
+            }
+            let plsql_re = regex::Regex::new(r"(\w+)\s+\w+\s*:=").unwrap();
+            for cap in plsql_re.captures_iter(body) {
                 variables.push(VariableInfo {
                     name: cap[1].to_string(),
                     function: function_name.to_string(),
