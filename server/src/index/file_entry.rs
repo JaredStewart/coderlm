@@ -63,7 +63,7 @@ impl Language {
         matches!(
             self,
             Language::Rust | Language::Python | Language::TypeScript | Language::JavaScript | Language::Go
-            | Language::Java | Language::Scala
+            | Language::Java | Language::Scala | Language::Ruby
         )
     }
 }

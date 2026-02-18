@@ -1,6 +1,7 @@
 pub mod go;
 pub mod java;
 pub mod python;
+pub mod ruby;
 pub mod rust;
 pub mod scala;
 pub mod typescript;
@@ -17,6 +18,7 @@ pub fn get_language_config(lang: Language) -> Option<LanguageConfig> {
         Language::Go => Some(go::config()),
         Language::Java => Some(java::config()),
         Language::Scala => Some(scala::config()),
+        Language::Ruby => Some(ruby::config()),
         _ => None,
     }
 }
