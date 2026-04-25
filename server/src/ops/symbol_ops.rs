@@ -359,6 +359,12 @@ fn is_test_symbol(sym: &Symbol) -> bool {
         Language::Scala => {
             sym.file.contains("Spec") || sym.file.contains("Test") || sym.file.contains("/test/")
         }
+        Language::Php => {
+            sym.name.starts_with("test")
+                || sym.file.ends_with("Test.php")
+                || sym.file.contains("/tests/")
+                || sym.file.contains("/Tests/")
+        }
         Language::Sql => false,
         _ => false,
     }

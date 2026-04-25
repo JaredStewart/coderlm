@@ -15,6 +15,7 @@ pub enum Language {
     C,
     Cpp,
     Ruby,
+    Php,
     Shell,
     Markdown,
     Json,
@@ -39,6 +40,7 @@ impl Language {
             "c" | "h" => Language::C,
             "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" => Language::Cpp,
             "rb" => Language::Ruby,
+            "php" | "phtml" => Language::Php,
             "sh" | "bash" | "zsh" | "fish" => Language::Shell,
             "md" | "mdx" => Language::Markdown,
             "json" | "jsonc" => Language::Json,
@@ -63,7 +65,7 @@ impl Language {
         matches!(
             self,
             Language::Rust | Language::Python | Language::TypeScript | Language::JavaScript | Language::Go
-            | Language::Java | Language::Scala
+            | Language::Java | Language::Scala | Language::Php
         )
     }
 }
