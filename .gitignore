@@ -2,3 +2,5 @@ server/target/
 .claude/coderlm_state/
 *.pyc
 __pycache__/
+scripts/hot-swap.sh
+scripts/bump-version.sh

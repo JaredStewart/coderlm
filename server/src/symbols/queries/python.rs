@@ -4,11 +4,23 @@ pub const SYMBOLS_QUERY: &str = r#"
 (function_definition
   name: (identifier) @function.name) @function.def
 
+(decorated_definition
+  definition: (function_definition
+    name: (identifier) @function.name)) @function.def
+
 (class_definition
-  name: (identifier) @class.name
-  body: (block
-    (function_definition
-      name: (identifier) @method.name) @method.def)?) @class.def
+  name: (identifier) @class.name) @class.def
+
+(decorated_definition
+  definition: (class_definition
+    name: (identifier) @class.name)) @class.def
+
+(expression_statement
+  (assignment
+    left: (identifier) @const.name)) @const.def
+
+(import_from_statement
+  name: (dotted_name) @import.name) @import.def
 "#;
 
 pub const CALLERS_QUERY: &str = r#"

@@ -30,8 +30,46 @@ pub fn list_symbols(
     results
 }
 
-pub fn search_symbols(symbol_table: &Arc<SymbolTable>, query: &str, limit: usize) -> Vec<Symbol> {
-    symbol_table.search(query, limit)
+pub fn search_symbols(
+    symbol_table: &Arc<SymbolTable>,
+    query: &str,
+    limit: usize,
+    file_filter: Option<&str>,
+) -> Vec<Symbol> {
+    let mut results = symbol_table.search(query, if file_filter.is_some() { limit * 5 } else { limit });
+
+    // Apply file filter if provided
+    if let Some(file) = file_filter {
+        results.retain(|s| s.file == file || s.file.contains(file));
+    }
+
+    // If few results, also search by signature substring
+    if results.len() < limit {
+        let query_lower = query.to_lowercase();
+        let existing_keys: std::collections::HashSet<String> =
+            results.iter().map(|s| format!("{}::{}", s.file, s.name)).collect();
+
+        for entry in symbol_table.symbols.iter() {
+            let sym = entry.value();
+            if existing_keys.contains(&format!("{}::{}", sym.file, sym.name)) {
+                continue;
+            }
+            if sym.signature.to_lowercase().contains(&query_lower) {
+                if let Some(file) = file_filter {
+                    if sym.file != file && !sym.file.contains(file) {
+                        continue;
+                    }
+                }
+                results.push(sym.clone());
+                if results.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+
+    results.truncate(limit);
+    results
 }
 
 pub fn get_implementation(
@@ -40,9 +78,23 @@ pub fn get_implementation(
     symbol_name: &str,
     file: &str,
 ) -> Result<String, String> {
-    let sym = symbol_table
-        .get(file, symbol_name)
-        .ok_or_else(|| format!("Symbol '{}' not found in '{}'", symbol_name, file))?;
+    // Try exact lookup first
+    let sym = symbol_table.get(file, symbol_name).or_else(|| {
+        // Fuzzy fallback: search by name and filter by file
+        let candidates = symbol_table.search(symbol_name, 50);
+        candidates
+            .into_iter()
+            .find(|s| s.file == file && s.name.to_lowercase() == symbol_name.to_lowercase())
+            .or_else(|| {
+                // Broader: any symbol in the file whose name contains the query
+                let file_symbols = symbol_table.list_by_file(file);
+                file_symbols
+                    .into_iter()
+                    .find(|s| s.name.to_lowercase() == symbol_name.to_lowercase())
+            })
+    });
+
+    let sym = sym.ok_or_else(|| format!("Symbol '{}' not found in '{}'", symbol_name, file))?;
 
     let abs_path = root.join(&sym.file);
     let source = std::fs::read_to_string(&abs_path)
@@ -269,6 +321,31 @@ fn is_definition_line(line: &str, name: &str, language: Language) -> bool {
                 || line.contains(&format!("class {}", name))
                 || line.contains(&format!("trait {}", name))
         }
+        Language::Ruby => {
+            line.contains(&format!("def {}", name))
+                || line.contains(&format!("def self.{}", name))
+                || line.contains(&format!("class {}", name))
+                || line.contains(&format!("module {}", name))
+                || line.contains(&format!("alias {}", name))
+                || (line.contains(name) && (line.contains("attr_reader")
+                    || line.contains("attr_writer") || line.contains("attr_accessor")
+                    || line.contains("define_method") || line.contains("alias_method")))
+        }
+        Language::Php => {
+            line.contains(&format!("function {}", name))
+                || line.contains(&format!("class {}", name))
+                || line.contains(&format!("interface {}", name))
+                || line.contains(&format!("trait {}", name))
+                || line.contains(&format!("enum {}", name))
+                || line.contains(&format!("namespace {}", name))
+                || (line.contains(name) && (line.contains("const ") || line.contains("case ")))
+        }
+        Language::Zig => {
+            line.contains(&format!("fn {}", name))
+                || line.contains(&format!("const {}", name))
+                || line.contains(&format!("var {}", name))
+                || (line.starts_with("test ") && line.contains(name))
+        }
         Language::Sql => {
             let lower = line.to_lowercase();
             let lower_name = name.to_lowercase();
@@ -336,6 +413,9 @@ pub fn find_tests(
 }
 
 fn is_test_symbol(sym: &Symbol) -> bool {
+    if sym.kind == crate::symbols::symbol::SymbolKind::Test {
+        return true;
+    }
     match sym.language {
         Language::Rust => {
             sym.name.starts_with("test") || sym.file.contains("/tests/")
@@ -359,6 +439,20 @@ fn is_test_symbol(sym: &Symbol) -> bool {
         Language::Scala => {
             sym.file.contains("Spec") || sym.file.contains("Test") || sym.file.contains("/test/")
         }
+        Language::Ruby => {
+            sym.name.starts_with("test_")
+                || sym.file.ends_with("_spec.rb")
+                || sym.file.ends_with("_test.rb")
+                || sym.file.contains("/spec/")
+                || sym.file.contains("/test/")
+        }
+        Language::Php => {
+            sym.name.starts_with("test")
+                || sym.file.ends_with("Test.php")
+                || sym.file.contains("/tests/")
+                || sym.file.contains("/Tests/")
+        }
+        Language::Zig => false, // handled by SymbolKind::Test short-circuit above
         Language::Sql => false,
         _ => false,
     }
@@ -523,6 +617,39 @@ fn list_variables_regex(
         Language::Scala => {
             let val_re = regex::Regex::new(r"\b(?:val|var)\s+(\w+)").unwrap();
             for cap in val_re.captures_iter(body) {
+                variables.push(VariableInfo {
+                    name: cap[1].to_string(),
+                    function: function_name.to_string(),
+                });
+            }
+        }
+        Language::Ruby => {
+            let assign_re = regex::Regex::new(r"^\s+(\w+)\s*=").unwrap();
+            for cap in assign_re.captures_iter(body) {
+                let name = cap[1].to_string();
+                if name != "self" && !name.chars().next().is_some_and(|c| c.is_uppercase()) {
+                    variables.push(VariableInfo {
+                        name,
+                        function: function_name.to_string(),
+                    });
+                }
+            }
+        }
+        Language::Php => {
+            let var_re = regex::Regex::new(r"\$(\w+)").unwrap();
+            for cap in var_re.captures_iter(body) {
+                let name = cap[1].to_string();
+                if name != "this" {
+                    variables.push(VariableInfo {
+                        name,
+                        function: function_name.to_string(),
+                    });
+                }
+            }
+        }
+        Language::Zig => {
+            let var_re = regex::Regex::new(r"\b(?:var|const)\s+(\w+)").unwrap();
+            for cap in var_re.captures_iter(body) {
                 variables.push(VariableInfo {
                     name: cap[1].to_string(),
                     function: function_name.to_string(),

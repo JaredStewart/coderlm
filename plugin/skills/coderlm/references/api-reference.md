@@ -3,6 +3,37 @@
 All endpoints prefixed with `/api/v1`. Session-scoped endpoints require `X-Session-Id` header.
 The CLI wrapper (`coderlm_cli.py`) handles headers and session management automatically.
 
+## Modes of Invocation
+
+The CLI supports three styles of invocation:
+
+1. **Single command** (one HTTP call per CLI invocation):
+   ```bash
+   python3 cli search MyFunction
+   ```
+2. **Batch CLI commands** (newline-separated; each line is parsed as a CLI subcommand and run in order, sharing the same session):
+   ```bash
+   python3 cli batch --commands "
+     search MyFunction
+     impl MyFunction --file path/to/file.py
+     callers MyFunction --file path/to/file.py
+   "
+   ```
+3. **Python exec** (run Python with helper functions in scope — lets later queries depend on earlier results without spawning new subprocesses):
+   ```bash
+   python3 cli exec --code "
+     hits = search('serialize_response')
+     if hits.get('symbols'):
+         sym = hits['symbols'][0]
+         impl_(sym['name'], sym['file'])
+         callers(sym['name'], sym['file'])
+   "
+   ```
+
+   Helpers available inside `exec`: `search()`, `impl_()`, `callers()`, `tests()`, `grep()`, `symbols()`, `peek_file()`, `structure()`, `variables_list()`, plus the `json` module. Each helper prints the JSON response and also returns it for use in subsequent code.
+
+Use **batch** for 2–5 known lookups. Use **exec** when later queries depend on earlier results, when tracing 3+ hops, or when you want a full trace returned in a single tool call.
+
 ## CLI Command Reference
 
 All commands below assume the CLI is at `skills/coderlm/scripts/coderlm_cli.py`.
@@ -35,14 +66,16 @@ python3 cli redefine-file src/main.rs "Updated description"
 python3 cli mark tests/integration.rs test
 ```
 
+The server's `/structure` endpoint accepts a `detail` query param (0=tree only, 1=+symbol summaries, 2=+method/parent info, 3=+full source) — the `init` response also includes the L1 structure for free, so the agent gets a per-file symbol overview without an extra call.
+
 ### Symbol Operations
 
 ```bash
 # List symbols (filter by kind, file, or both)
 python3 cli symbols [--kind function] [--file src/main.rs] [--limit 50]
 
-# Search symbols by name substring
-python3 cli search "handler" [--limit 20]
+# Search symbols by name substring (optionally restrict to one file)
+python3 cli search "handler" [--limit 20] [--file src/main.rs]
 
 # Get full source code of a symbol
 python3 cli impl run_server --file src/main.rs
@@ -73,8 +106,31 @@ python3 cli grep "DashMap" [--max-matches 50] [--context-lines 2]
 # Scope-aware grep: only match in code (skip comments and strings)
 python3 cli grep "DashMap" --scope code
 
+# Restrict grep to one file
+python3 cli grep "DashMap" --file src/index/file_tree.rs
+
 # Compute byte-range chunks for a file
 python3 cli chunks src/main.rs [--size 5000] [--overlap 200]
+```
+
+### Batch and Exec Modes
+
+```bash
+# Batch: run several CLI commands in one invocation
+python3 cli batch --commands "
+  search MyFunction
+  impl MyFunction --file path/to/file.py
+  callers MyFunction --file path/to/file.py
+"
+
+# Exec: programmatic, multi-hop traces in a single call
+python3 cli exec --code "
+  hits = search('serialize_response')
+  if hits.get('symbols'):
+      sym = hits['symbols'][0]
+      impl_(sym['name'], sym['file'])
+      callers(sym['name'], sym['file'])
+"
 ```
 
 ### Annotations
@@ -93,6 +149,45 @@ python3 cli load-annotations
 # Session command history
 python3 cli history [--limit 50]
 ```
+
+## Server-only Endpoints (no CLI wrapper)
+
+The following endpoints exist on the server but are not yet wrapped in `coderlm_cli.py`. They can be invoked with `curl` against `http://127.0.0.1:3000/api/v1/...` using the `X-Session-Id` header. See `server/REPL_to_API.md` for full request/response details.
+
+### Buffers (`/buffers`)
+
+Project-scoped, in-memory named scratch buffers.
+
+| Method | Endpoint                        | Body / Params                                                  |
+|--------|---------------------------------|----------------------------------------------------------------|
+| GET    | `/buffers`                      | —                                                              |
+| POST   | `/buffers`                      | `{ "name", "content", "description"? }`                        |
+| POST   | `/buffers/from-file`            | `{ "name", "file", "start_line"?, "end_line"? }`               |
+| POST   | `/buffers/from-symbol`          | `{ "name", "symbol", "file" }`                                 |
+| GET    | `/buffers/{name}`               | —                                                              |
+| GET    | `/buffers/{name}/peek`          | `?start=N&end=N`                                               |
+| DELETE | `/buffers/{name}`               | —                                                              |
+
+### Vars (`/vars`)
+
+Project-scoped, in-memory JSON key/value store.
+
+| Method | Endpoint        | Body                              |
+|--------|-----------------|-----------------------------------|
+| GET    | `/vars`         | — (returns `{name, value_type}` summaries) |
+| POST   | `/vars`         | `{ "name", "value": <json> }`     |
+| GET    | `/vars/{name}`  | —                                 |
+| DELETE | `/vars/{name}`  | —                                 |
+
+### Subcall Results (`/subcall_results`)
+
+Project-scoped store for findings from sub-agent exploration calls.
+
+| Method | Endpoint            | Body                                  |
+|--------|---------------------|---------------------------------------|
+| GET    | `/subcall_results`  | —                                     |
+| POST   | `/subcall_results`  | `SubcallResult` JSON (see REPL_to_API.md) |
+| DELETE | `/subcall_results`  | —                                     |
 
 ## Response Shapes
 
@@ -231,6 +326,9 @@ Same shape as symbols response.
 | Go         | `.go`                         | tree-sitter  |
 | Java       | `.java`                       | tree-sitter  |
 | Scala      | `.scala`, `.sc`               | tree-sitter  |
+| Ruby       | `.rb`, `.rake`                | tree-sitter  |
+| PHP        | `.php`, `.phtml`              | tree-sitter  |
+| Zig        | `.zig`, `.zon`                | tree-sitter  |
 | SQL        | `.sql`                        | regex        |
 
 Languages with tree-sitter support produce full symbol tables (functions, classes, methods, callers, variables). SQL uses regex fallbacks for variable and definition detection. All other file types appear in the file tree and are searchable via peek/grep, but do not produce symbols.

@@ -136,6 +136,20 @@ pub fn extract_symbols_from_file(
                 "mod.def" => {
                     def_node = Some(cap.node);
                 }
+                "import.name" => {
+                    name = Some(text.to_string());
+                    kind = Some(SymbolKind::Import);
+                }
+                "import.def" => {
+                    def_node = Some(cap.node);
+                }
+                "test.name" => {
+                    name = Some(text.to_string());
+                    kind = Some(SymbolKind::Test);
+                }
+                "test.def" => {
+                    def_node = Some(cap.node);
+                }
                 _ => {}
             }
         }
@@ -161,6 +175,67 @@ pub fn extract_symbols_from_file(
                 definition: None,
                 parent,
             });
+        }
+    }
+
+    // Deduplicate symbols by (file, name): keep the one with the larger byte range
+    // (the more complete definition). On equal ranges, prefer specific kinds
+    // (Struct/Enum/Class/etc.) over the generic Constant/Variable/Other catch-alls
+    // — some grammars (e.g. Zig) emit both for the same node.
+    {
+        use std::collections::HashMap;
+        let kind_priority = |k: SymbolKind| -> u8 {
+            match k {
+                SymbolKind::Other | SymbolKind::Variable | SymbolKind::Constant | SymbolKind::Import => 1,
+                _ => 10,
+            }
+        };
+        let mut best: HashMap<String, usize> = HashMap::new();
+        for (i, sym) in symbols.iter().enumerate() {
+            let key = format!("{}::{}", sym.file, sym.name);
+            let range_size = sym.byte_range.1.saturating_sub(sym.byte_range.0);
+            if let Some(&prev_idx) = best.get(&key) {
+                let prev_size = symbols[prev_idx].byte_range.1.saturating_sub(symbols[prev_idx].byte_range.0);
+                if range_size > prev_size {
+                    best.insert(key, i);
+                } else if range_size == prev_size
+                    && kind_priority(sym.kind) > kind_priority(symbols[prev_idx].kind)
+                {
+                    best.insert(key, i);
+                }
+            } else {
+                best.insert(key, i);
+            }
+        }
+        let keep: std::collections::HashSet<usize> = best.into_values().collect();
+        let mut idx = 0;
+        symbols.retain(|_| {
+            let k = idx;
+            idx += 1;
+            keep.contains(&k)
+        });
+    }
+
+    // For Python: associate methods with their parent class by checking if a
+    // function's byte_range is contained within a class's byte_range.
+    if language == Language::Python {
+        // Collect class ranges
+        let class_ranges: Vec<(String, usize, usize)> = symbols
+            .iter()
+            .filter(|s| s.kind == SymbolKind::Class)
+            .map(|s| (s.name.clone(), s.byte_range.0, s.byte_range.1))
+            .collect();
+
+        for sym in symbols.iter_mut() {
+            if sym.kind == SymbolKind::Function && sym.parent.is_none() {
+                for (class_name, start, end) in &class_ranges {
+                    if sym.byte_range.0 >= *start && sym.byte_range.1 <= *end {
+                        sym.kind = SymbolKind::Method;
+                        sym.parent = Some(class_name.clone());
+                        break;
+                    }
+                }
+            }
         }
     }
 

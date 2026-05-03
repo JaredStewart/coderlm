@@ -1,8 +1,16 @@
+<p align="center">
+  <img src="logo.png" alt="CodeRLM" width="180">
+</p>
+
 # CodeRLM
 
 CodeRLM applies the [Recursive Language Model](https://arxiv.org/abs/2512.24601) (RLM) pattern to codebases. A Rust server indexes a project's files and symbols via tree-sitter, then exposes a JSON API that LLM agents query for targeted context — structure, symbols, source code, callers, tests, and grep. Instead of loading an entire codebase into context or relying on heuristic file scanning, the agent asks the server for exactly what it needs.
 
 An integrated Claude Code skill (`plugin/skills/coderlm/`) wraps the API with a Python CLI and a structured workflow, so Claude Code can explore unfamiliar codebases without reading everything into context.
+
+## About Reinforcement
+
+CodeRLM is the first product from **[Reinforcement](https://getreinforcement.com?utm_source=github)**. It is open-source adopting the MIT license.
 
 ## How It Works
 
@@ -170,6 +178,9 @@ Options:
 | Go         | `.go`                         | tree-sitter  |
 | Java       | `.java`                       | tree-sitter  |
 | Scala      | `.scala`, `.sc`               | tree-sitter  |
+| Ruby       | `.rb`, `.rake`                | tree-sitter  |
+| PHP        | `.php`, `.phtml`              | tree-sitter  |
+| Zig        | `.zig`, `.zon`                | tree-sitter  |
 | SQL        | `.sql`                        | regex        |
 
 Languages with tree-sitter support produce full symbol tables (functions, classes, methods, callers, variables). SQL uses regex fallbacks for variable and definition detection. All file types appear in the file tree and are searchable via peek/grep.

@@ -15,7 +15,7 @@ Before using any other operation, the agent creates a session **with the working
 | Operation       | Method | Endpoint          | Body / Params | Notes |
 |-----------------|--------|-------------------|---------------|-------|
 | List sessions   | GET    | `/sessions`       | —             | All active sessions (admin). No session header needed |
-| Create session  | POST   | `/sessions`       | `{ "cwd": "/path/to/project" }` | Indexes project if new; returns `{ session_id, created_at, project }` |
+| Create session  | POST   | `/sessions`       | `{ "cwd": "/path/to/project" }` | Indexes project if new; returns `{ session_id, created_at, project, structure }` (structure is the L1 file tree, included for free so the agent can orient on session create) |
 | Check session   | GET    | `/sessions/:id`   | —             | Returns session info including project path |
 | End session     | DELETE | `/sessions/:id`   | —             | Cleans up history |
 
@@ -37,14 +37,25 @@ If the project was evicted due to capacity limits, requests using that session w
 
 View the codebase file tree. Equivalent to running `tree` with ignore filtering applied.
 
-| REPL operation           | Method | Endpoint              | Params / Body                          |
-|--------------------------|--------|-----------------------|----------------------------------------|
-| `structure`              | GET    | `/structure`          | `?depth=N` (0 = unlimited)             |
-| `structure define $file` | POST   | `/structure/define`   | `{ "file": "...", "definition": "..." }` |
-| `structure redefine $file` | POST | `/structure/redefine` | `{ "file": "...", "definition": "..." }` |
-| `structure mark $file $type` | POST | `/structure/mark`  | `{ "file": "...", "mark": "..." }`     |
+| REPL operation           | Method | Endpoint              | Params / Body                                            |
+|--------------------------|--------|-----------------------|----------------------------------------------------------|
+| `structure`              | GET    | `/structure`          | `?depth=N&detail=L` (depth 0 = unlimited; detail 0–3)    |
+| `structure define $file` | POST   | `/structure/define`   | `{ "file": "...", "definition": "..." }`                 |
+| `structure redefine $file` | POST | `/structure/redefine` | `{ "file": "...", "definition": "..." }`                 |
+| `structure mark $file $type` | POST | `/structure/mark`  | `{ "file": "...", "mark": "..." }`                       |
 
-### Response: `GET /structure`
+### Detail levels
+
+`?detail=` controls how much per-file symbol information is returned alongside the tree:
+
+| Level | Contents                                                              |
+|-------|-----------------------------------------------------------------------|
+| 0     | File tree only (default)                                              |
+| 1     | + top-level symbol names, kinds, and signatures per file              |
+| 2     | + method signatures and parent/owner info                             |
+| 3     | + full source for each symbol                                         |
+
+### Response: `GET /structure` (detail=0)
 
 ```json
 {
@@ -53,6 +64,25 @@ View the codebase file tree. Equivalent to running `tree` with ignore filtering 
   "language_breakdown": [
     { "language": "rust", "count": 38 },
     { "language": "toml", "count": 4 }
+  ]
+}
+```
+
+### Response: `GET /structure?detail=1`
+
+```json
+{
+  "tree": "├── src/\n│   ├── main.rs\n│   └── lib.rs\n",
+  "file_count": 42,
+  "language_breakdown": [{ "language": "rust", "count": 38 }],
+  "detail": 1,
+  "file_symbols": [
+    {
+      "file": "src/main.rs",
+      "symbols": [
+        { "name": "run_server", "kind": "function", "signature": "async fn run_server(", "line": 69 }
+      ]
+    }
   ]
 }
 ```
@@ -118,14 +148,18 @@ List symbols extracted from the codebase. Defaults to all kinds; filter with que
 
 ## symbol search
 
-Find symbols by name substring.
+Find symbols by name substring. Optionally restrict to a single file.
 
-| REPL operation          | Method | Endpoint          | Params                  |
-|-------------------------|--------|-------------------|-------------------------|
-| `symbol search $query`  | GET    | `/symbols/search` | `?q=handler&limit=20`   |
+| REPL operation          | Method | Endpoint          | Params                                |
+|-------------------------|--------|-------------------|---------------------------------------|
+| `symbol search $query`  | GET    | `/symbols/search` | `?q=handler&limit=20&file=src/main.rs`|
 
 ```bash
+# Project-wide
 curl -s -H "X-Session-Id: $SID" "localhost:3000/api/v1/symbols/search?q=parse&limit=10"
+
+# Restrict to one file
+curl -s -H "X-Session-Id: $SID" "localhost:3000/api/v1/symbols/search?q=parse&file=src/main.rs"
 ```
 
 ---
@@ -269,11 +303,21 @@ curl -s -H "X-Session-Id: $SID" "localhost:3000/api/v1/peek?file=src/main.rs&sta
 
 ## grep
 
-Regex search across all indexed files.
+Regex search across all indexed files. Supports scope-aware filtering and per-file restriction.
 
-| REPL operation                  | Method | Endpoint | Params                                                  |
-|---------------------------------|--------|----------|---------------------------------------------------------|
-| `grep $pattern`                 | GET    | `/grep`  | `?pattern=...&max_matches=50&context_lines=2`           |
+| REPL operation                  | Method | Endpoint | Params                                                                    |
+|---------------------------------|--------|----------|---------------------------------------------------------------------------|
+| `grep $pattern`                 | GET    | `/grep`  | `?pattern=...&max_matches=50&context_lines=2&scope=all|code&file=path`    |
+
+### Parameters
+
+| Param           | Default | Notes                                                                  |
+|-----------------|---------|------------------------------------------------------------------------|
+| `pattern`       | —       | Full Rust regex syntax                                                 |
+| `max_matches`   | 50      | Cap on returned matches                                                |
+| `context_lines` | 2       | Lines of context before/after each match                               |
+| `scope`         | `all`   | `all` matches everywhere; `code` skips matches inside comment/string AST nodes (per-language tree-sitter aware) |
+| `file`          | —       | Restrict grep to a single file path                                    |
 
 ### Response
 
@@ -294,7 +338,15 @@ Regex search across all indexed files.
 }
 ```
 
-The `pattern` parameter accepts full Rust regex syntax.
+```bash
+# Skip matches inside comments and string literals
+curl -s -H "X-Session-Id: $SID" \
+  "localhost:3000/api/v1/grep?pattern=TODO&scope=code"
+
+# Restrict to one file
+curl -s -H "X-Session-Id: $SID" \
+  "localhost:3000/api/v1/grep?pattern=DashMap&file=src/index/file_tree.rs"
+```
 
 ---
 
@@ -433,6 +485,131 @@ curl -s localhost:3000/api/v1/roots
 
 ---
 
+## annotations (persistence)
+
+Annotations (file definitions, symbol definitions, marks) live in memory by default. These endpoints persist them to / hydrate them from `.coderlm/annotations.json` in the project root. Annotations are also auto-loaded on session creation, and the `Stop` hook auto-saves before cleanup.
+
+| Operation             | Method | Endpoint               | Body | Notes |
+|-----------------------|--------|------------------------|------|-------|
+| Save annotations      | POST   | `/annotations/save`    | —    | Writes `.coderlm/annotations.json` to the project root |
+| Load annotations      | POST   | `/annotations/load`    | —    | Reads `.coderlm/annotations.json` and applies it; returns counts of what was loaded |
+
+```bash
+curl -s -X POST -H "X-Session-Id: $SID" localhost:3000/api/v1/annotations/save
+# {"ok":true}
+
+curl -s -X POST -H "X-Session-Id: $SID" localhost:3000/api/v1/annotations/load
+# {"ok":true,"loaded":{"file_definitions":12,"file_marks":3,"symbol_definitions":47}}
+```
+
+---
+
+## buffers
+
+Project-scoped named scratch buffers. Useful for capturing a chunk of source, a snippet under construction, or transient context that should outlive a single request without polluting the file tree. Buffers are in-memory only — they do **not** persist across server restarts.
+
+| Operation                 | Method | Endpoint                          | Body / Params                                                            |
+|---------------------------|--------|-----------------------------------|--------------------------------------------------------------------------|
+| List buffers              | GET    | `/buffers`                        | —                                                                        |
+| Create buffer (raw)       | POST   | `/buffers`                        | `{ "name": "...", "content": "...", "description": "..." }` (description optional) |
+| Create buffer from file   | POST   | `/buffers/from-file`              | `{ "name": "...", "file": "...", "start_line": 0, "end_line": 100 }` (start/end optional — full file if omitted) |
+| Create buffer from symbol | POST   | `/buffers/from-symbol`            | `{ "name": "...", "symbol": "...", "file": "..." }` (uses tree-sitter byte range) |
+| Get buffer (full)         | GET    | `/buffers/{name}`                 | —                                                                        |
+| Peek buffer (line range)  | GET    | `/buffers/{name}/peek`            | `?start=0&end=100`                                                       |
+| Delete buffer             | DELETE | `/buffers/{name}`                 | —                                                                        |
+
+### Response: `GET /buffers`
+
+```json
+{
+  "buffers": [
+    {
+      "name": "scan_dir_snapshot",
+      "description": "Symbol scan_directory from src/index/walker.rs",
+      "size": 812,
+      "lines": 24,
+      "created_at": "2026-05-03T12:34:56Z"
+    }
+  ],
+  "count": 1
+}
+```
+
+### Response: `GET /buffers/{name}`
+
+```json
+{
+  "name": "scan_dir_snapshot",
+  "content": "pub fn scan_directory(...) { ... }",
+  "description": "Symbol scan_directory from src/index/walker.rs",
+  "created_at": "2026-05-03T12:34:56Z"
+}
+```
+
+---
+
+## vars
+
+Project-scoped JSON key/value store. Useful for stashing arbitrary intermediate state across requests within a session (e.g. a list of file paths to revisit). Values are arbitrary JSON. In-memory only.
+
+| Operation        | Method | Endpoint        | Body                                    |
+|------------------|--------|-----------------|-----------------------------------------|
+| List variables   | GET    | `/vars`         | —                                       |
+| Set variable     | POST   | `/vars`         | `{ "name": "...", "value": <json> }`    |
+| Get variable     | GET    | `/vars/{name}`  | —                                       |
+| Delete variable  | DELETE | `/vars/{name}`  | —                                       |
+
+### Response: `GET /vars`
+
+`list_vars` summarises each entry with its type rather than full value:
+
+```json
+{
+  "variables": [
+    { "name": "todo_files", "value_type": "array[7]" },
+    { "name": "current_module", "value_type": "string" }
+  ],
+  "count": 2
+}
+```
+
+### Response: `GET /vars/{name}`
+
+```json
+{ "name": "todo_files", "value": ["src/main.rs", "src/lib.rs"] }
+```
+
+---
+
+## subcall_results
+
+Project-scoped store for results from sub-agent calls (used by the recursive exploration pattern, where a parent agent dispatches a question to a child agent and reads back its findings). In-memory only.
+
+| Operation              | Method | Endpoint              | Body                                  |
+|------------------------|--------|-----------------------|---------------------------------------|
+| List results           | GET    | `/subcall_results`    | —                                     |
+| Append result          | POST   | `/subcall_results`    | `SubcallResult` (see below)           |
+| Clear all results      | DELETE | `/subcall_results`    | —                                     |
+
+### `SubcallResult` shape
+
+```json
+{
+  "chunk_id": "src/server/routes.rs:0-300",
+  "query": "Where do we register the /annotations/save route?",
+  "findings": [
+    "build_routes registers POST /api/v1/annotations/save -> save_annotations at routes.rs:87"
+  ],
+  "suggested_queries": ["What does save_annotations write?"],
+  "answer_if_complete": null,
+  "depth": 1
+}
+```
+
+`findings` and `suggested_queries` are free-form string arrays. `answer_if_complete` should be set when the subcall produced a terminal answer (no further hops needed). `depth` records how deep in the recursion the subcall was issued at.
+
+---
+
 ## Typical agent workflow
 
 This is the sequence a skill should follow when working with a codebase:
@@ -440,21 +617,23 @@ This is the sequence a skill should follow when working with a codebase:
 ```
 1.  GET    /health                            → confirm server is running
 2.  POST   /sessions { "cwd": "/path/..." }   → get session_id, project is indexed
-3.  GET    /structure?depth=2                 → orient: see top-level layout
+                                               (response includes L1 structure for free)
+3.  GET    /structure?depth=2&detail=1        → orient: layout + per-file symbol summaries
 4.  GET    /symbols?kind=function&limit=50    → scan function inventory
 5.  GET    /symbols/search?q=<relevant_term>  → find symbols related to the task
 6.  GET    /symbols/implementation?symbol=... → read the source of key functions
 7.  GET    /peek?file=...&start=0&end=50      → read file headers / imports
-8.  GET    /grep?pattern=<error_msg>          → locate specific code patterns
+8.  GET    /grep?pattern=<error_msg>&scope=code → locate code patterns (skip comments)
 9.  GET    /symbols/callers?symbol=...        → understand how a function is used
 10. GET    /symbols/tests?symbol=...          → find existing test coverage
 11. POST   /structure/define                  → annotate files as understanding grows
 12. POST   /symbols/define                    → annotate symbols
-13. GET    /history                           → review what has been explored
-14. DELETE /sessions/:id                      → clean up when done
+13. POST   /annotations/save                  → persist annotations to disk
+14. GET    /history                           → review what has been explored
+15. DELETE /sessions/:id                      → clean up when done
 ```
 
-Steps 3-12 repeat as needed. The agent builds up a mental map of the codebase incrementally, annotating as it goes so that subsequent queries (by the same agent or by other agents in a swarm) benefit from the accumulated definitions.
+Steps 3-13 repeat as needed. The agent builds up a mental map of the codebase incrementally, annotating as it goes so that subsequent queries (by the same agent or by other agents in a swarm) benefit from the accumulated definitions.
 
 ---
 

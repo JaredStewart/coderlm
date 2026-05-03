@@ -15,6 +15,11 @@ pub const SYMBOLS_QUERY: &str = r#"
     name: (identifier) @const.name
     value: (arrow_function))) @const.def
 
+(lexical_declaration
+  (variable_declarator
+    name: (identifier) @function.name
+    value: (function_expression))) @function.def
+
 (interface_declaration
   name: (type_identifier) @interface.name) @interface.def
 
@@ -85,10 +90,41 @@ pub const JS_SYMBOLS_QUERY: &str = r#"
 (method_definition
   name: (property_identifier) @method.name) @method.def
 
+; const/let foo = () => {}
 (lexical_declaration
   (variable_declarator
     name: (identifier) @const.name
     value: (arrow_function))) @const.def
+
+; const/let foo = function() {}
+(lexical_declaration
+  (variable_declarator
+    name: (identifier) @function.name
+    value: (function_expression))) @function.def
+
+; var foo = () => {}
+(variable_declaration
+  (variable_declarator
+    name: (identifier) @const.name
+    value: (arrow_function))) @const.def
+
+; var foo = function() {}
+(variable_declaration
+  (variable_declarator
+    name: (identifier) @function.name
+    value: (function_expression))) @function.def
+
+; exports.foo = function() {} / module.exports.foo = function() {}
+(assignment_expression
+  left: (member_expression
+    property: (property_identifier) @function.name)
+  right: (function_expression)) @function.def
+
+; exports.foo = () => {}  / module.exports.foo = () => {}
+(assignment_expression
+  left: (member_expression
+    property: (property_identifier) @function.name)
+  right: (arrow_function)) @function.def
 "#;
 
 pub const JS_CALLERS_QUERY: &str = r#"

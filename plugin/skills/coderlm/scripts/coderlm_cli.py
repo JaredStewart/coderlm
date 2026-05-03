@@ -4,26 +4,24 @@
 Manages session state and provides clean commands for codebase exploration.
 All state is cached in .claude/coderlm_state/session.json relative to cwd.
 
+Two modes of operation:
+  1. Individual commands:  python3 coderlm_cli.py search MyFunction
+  2. Batch CLI commands:   python3 coderlm_cli.py batch --commands "search X\nimpl X --file Y"
+  3. Python REPL exec:     python3 coderlm_cli.py exec --code "search('X'); impl_('X', 'Y')"
+
 Usage:
   python3 coderlm_cli.py init [--port PORT] [--cwd PATH]
-  python3 coderlm_cli.py structure [--depth N]
-  python3 coderlm_cli.py symbols [--kind KIND] [--file FILE] [--limit N]
-  python3 coderlm_cli.py search QUERY [--limit N]
+  python3 coderlm_cli.py search QUERY [--limit N] [--file FILE]
   python3 coderlm_cli.py impl SYMBOL --file FILE
   python3 coderlm_cli.py callers SYMBOL --file FILE [--limit N]
   python3 coderlm_cli.py tests SYMBOL --file FILE [--limit N]
-  python3 coderlm_cli.py variables FUNCTION --file FILE
+  python3 coderlm_cli.py grep PATTERN [--max-matches N] [--scope all|code] [--file FILE]
   python3 coderlm_cli.py peek FILE [--start N] [--end N]
-  python3 coderlm_cli.py grep PATTERN [--max-matches N] [--context-lines N] [--scope all|code]
-  python3 coderlm_cli.py chunks FILE [--size N] [--overlap N]
-  python3 coderlm_cli.py define-file FILE DEFINITION
-  python3 coderlm_cli.py redefine-file FILE DEFINITION
-  python3 coderlm_cli.py define-symbol SYMBOL --file FILE DEFINITION
-  python3 coderlm_cli.py redefine-symbol SYMBOL --file FILE DEFINITION
-  python3 coderlm_cli.py mark FILE TYPE
-  python3 coderlm_cli.py save-annotations
-  python3 coderlm_cli.py load-annotations
-  python3 coderlm_cli.py history [--limit N]
+  python3 coderlm_cli.py symbols [--kind KIND] [--file FILE] [--limit N]
+  python3 coderlm_cli.py structure [--depth N]
+  python3 coderlm_cli.py variables FUNCTION --file FILE
+  python3 coderlm_cli.py batch --commands "cmd1\\ncmd2\\ncmd3"
+  python3 coderlm_cli.py exec --code "search('X'); impl_('X', 'file.py')"
   python3 coderlm_cli.py status
   python3 coderlm_cli.py cleanup
 """
@@ -33,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 import urllib.error
 import urllib.parse
@@ -81,6 +80,7 @@ def _request(
     data: dict | None = None,
     headers: dict | None = None,
     timeout: int = 30,
+    exit_on_error: bool = True,
 ) -> dict:
     hdrs = headers or {}
     body = None
@@ -101,22 +101,27 @@ def _request(
             err = {"error": body_text, "status": e.code}
 
         if e.code == 410:
+            _clear_state()
+            if exit_on_error:
+                print("ERROR: Project was evicted from server. Run: coderlm_cli.py init",
+                      file=sys.stderr)
+                sys.exit(1)
+            return err
+
+        if exit_on_error:
+            print(json.dumps(err, indent=2))
+            sys.exit(1)
+        return err
+    except urllib.error.URLError as e:
+        err = {"error": f"Cannot connect to coderlm-server: {e.reason}"}
+        if exit_on_error:
             print(
-                "ERROR: Project was evicted from server. Run: coderlm_cli.py init",
+                f"ERROR: Cannot connect to coderlm-server: {e.reason}\n"
+                f"Make sure the server is running: coderlm-server serve",
                 file=sys.stderr,
             )
-            _clear_state()
             sys.exit(1)
-
-        print(json.dumps(err, indent=2))
-        sys.exit(1)
-    except urllib.error.URLError as e:
-        print(
-            f"ERROR: Cannot connect to coderlm-server: {e.reason}\n"
-            f"Make sure the server is running: coderlm-server serve",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        return err
 
 
 def _get(state: dict, path: str, params: dict | None = None) -> dict:
@@ -135,11 +140,25 @@ def _post(state: dict, path: str, data: dict) -> dict:
     return _request("POST", url, data=data, headers={"X-Session-Id": _session_id(state)})
 
 
+def _safe_get(state: dict, path: str, params: dict | None = None) -> dict:
+    """Like _get but returns error dicts instead of calling sys.exit."""
+    sid = state.get("session_id")
+    if not sid:
+        return {"error": "No active session. Run: coderlm_cli.py init"}
+    base = _base_url(state)
+    url = f"{base}{path}"
+    if params:
+        clean = {k: v for k, v in params.items() if v is not None}
+        if clean:
+            url += "?" + urllib.parse.urlencode(clean)
+    return _request("GET", url, headers={"X-Session-Id": sid}, exit_on_error=False)
+
+
 def _output(result: dict) -> None:
     print(json.dumps(result, indent=2))
 
 
-# ── Commands ──────────────────────────────────────────────────────────
+# ── CLI Commands ─────────────────────────────────────────────────────
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -175,7 +194,6 @@ def cmd_init(args: argparse.Namespace) -> None:
 def cmd_status(args: argparse.Namespace) -> None:
     state = _load_state()
     if not state:
-        # No session — just check server health
         host = args.host or "127.0.0.1"
         port = args.port or 3000
         base = f"http://{host}:{port}/api/v1"
@@ -187,14 +205,10 @@ def cmd_status(args: argparse.Namespace) -> None:
     health = _request("GET", f"{base}/health")
     info = {"server": health, "session": state}
 
-    # Try to get session details
     sid = state.get("session_id")
     if sid:
         try:
-            session_info = _request(
-                "GET",
-                f"{base}/sessions/{sid}",
-            )
+            session_info = _request("GET", f"{base}/sessions/{sid}")
             info["session_details"] = session_info
         except SystemExit:
             info["session_details"] = "session may have expired"
@@ -227,6 +241,8 @@ def cmd_search(args: argparse.Namespace) -> None:
     params = {"q": args.query}
     if args.limit is not None:
         params["limit"] = args.limit
+    if args.file is not None:
+        params["file"] = args.file
     _output(_get(state, "/symbols/search", params))
 
 
@@ -277,6 +293,8 @@ def cmd_grep(args: argparse.Namespace) -> None:
         params["context_lines"] = args.context_lines
     if args.scope is not None:
         params["scope"] = args.scope
+    if args.file is not None:
+        params["file"] = args.file
     _output(_get(state, "/grep", params))
 
 
@@ -363,6 +381,153 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
     print(f"Session {sid} deleted.")
 
 
+def cmd_batch(args: argparse.Namespace) -> None:
+    """Execute multiple CLI commands in one invocation."""
+    commands = args.commands
+    lines = commands.strip().split("\n")
+    any_failed = False
+    parser = build_parser()
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        print(f"=== {line} ===")
+        try:
+            tokens = shlex.split(line)
+            sub_args = parser.parse_args(tokens)
+            sub_args.func(sub_args)
+        except SystemExit as e:
+            if e.code != 0:
+                any_failed = True
+        except Exception as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            any_failed = True
+        print()
+
+    if any_failed:
+        sys.exit(1)
+
+
+# ── REPL Helper Functions (for exec --code) ──────────────────────────
+# These call the HTTP API directly (no subprocess). They print results
+# and return parsed data so they work naturally in exec'd Python code.
+
+
+def search(query: str, limit: int = 20, file: str | None = None):
+    """Find symbols by name. Returns list of symbol dicts."""
+    state = _load_state()
+    params = {"q": query, "limit": limit}
+    if file:
+        params["file"] = file
+    result = _safe_get(state, "/symbols/search", params)
+    print(json.dumps(result, indent=2))
+    return result
+
+
+def impl_(symbol: str, file: str):
+    """Get full source code of a symbol. Returns source string or dict."""
+    state = _load_state()
+    result = _safe_get(state, "/symbols/implementation", {"symbol": symbol, "file": file})
+    print(json.dumps(result, indent=2) if isinstance(result, (dict, list)) else result)
+    return result
+
+
+def callers(symbol: str, file: str, limit: int = 50):
+    """Find call sites for a symbol. Returns list of caller dicts."""
+    state = _load_state()
+    result = _safe_get(state, "/symbols/callers", {"symbol": symbol, "file": file, "limit": limit})
+    print(json.dumps(result, indent=2))
+    return result
+
+
+def tests(symbol: str, file: str, limit: int = 20):
+    """Find tests referencing a symbol. Returns list of test dicts."""
+    state = _load_state()
+    result = _safe_get(state, "/symbols/tests", {"symbol": symbol, "file": file, "limit": limit})
+    print(json.dumps(result, indent=2))
+    return result
+
+
+def grep(pattern: str, max_matches: int = 50, scope: str = "all", file: str | None = None):
+    """Regex search across files. scope='code' skips comments/strings."""
+    state = _load_state()
+    params = {"pattern": pattern, "max_matches": max_matches, "scope": scope}
+    if file:
+        params["file"] = file
+    result = _safe_get(state, "/grep", params)
+    print(json.dumps(result, indent=2))
+    return result
+
+
+def symbols(file: str | None = None, kind: str | None = None, limit: int = 100):
+    """List symbols. Optionally filter by file and/or kind."""
+    state = _load_state()
+    params = {"limit": limit}
+    if file:
+        params["file"] = file
+    if kind:
+        params["kind"] = kind
+    result = _safe_get(state, "/symbols", params)
+    print(json.dumps(result, indent=2))
+    return result
+
+
+def peek_file(file: str, start: int = 0, end: int = 50):
+    """Read a range of lines from a file."""
+    state = _load_state()
+    result = _safe_get(state, "/peek", {"file": file, "start": start, "end": end})
+    print(json.dumps(result, indent=2) if isinstance(result, (dict, list)) else result)
+    return result
+
+
+def structure(detail: int = 0, depth: int = 0):
+    """Get project file tree. detail: 0-3, depth: 0=unlimited."""
+    state = _load_state()
+    params = {}
+    if depth:
+        params["depth"] = depth
+    result = _safe_get(state, "/structure", params)
+    print(json.dumps(result, indent=2))
+    return result
+
+
+def variables_list(function: str, file: str):
+    """List local variables in a function."""
+    state = _load_state()
+    result = _safe_get(state, "/symbols/variables", {"function": function, "file": file})
+    print(json.dumps(result, indent=2))
+    return result
+
+
+def cmd_exec(args: argparse.Namespace) -> None:
+    """Execute Python code with helper functions in scope."""
+    code = args.code
+    if not code:
+        print("ERROR: --code argument is required", file=sys.stderr)
+        sys.exit(1)
+
+    exec_globals = {
+        "__builtins__": __builtins__,
+        "search": search,
+        "impl_": impl_,
+        "callers": callers,
+        "tests": tests,
+        "grep": grep,
+        "symbols": symbols,
+        "peek_file": peek_file,
+        "structure": structure,
+        "variables_list": variables_list,
+        "json": json,
+    }
+
+    try:
+        exec(code, exec_globals)
+    except Exception as e:
+        print(f"ERROR: {type(e).__name__}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 # ── Parser ────────────────────────────────────────────────────────────
 
 
@@ -403,6 +568,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_search = sub.add_parser("search", help="Search symbols by name")
     p_search.add_argument("query", help="Search term")
     p_search.add_argument("--limit", type=int, default=None)
+    p_search.add_argument("--file", help="Filter results to this file path")
     p_search.set_defaults(func=cmd_search)
 
     # impl
@@ -445,6 +611,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_grep.add_argument("--context-lines", type=int, default=None)
     p_grep.add_argument("--scope", choices=["all", "code"], default=None,
                          help="Scope filter: 'all' (default) or 'code' (skip comments/strings)")
+    p_grep.add_argument("--file", help="Restrict grep to this file path")
     p_grep.set_defaults(func=cmd_grep)
 
     # chunks
@@ -503,6 +670,18 @@ def build_parser() -> argparse.ArgumentParser:
     # cleanup
     p_clean = sub.add_parser("cleanup", help="Delete the current session")
     p_clean.set_defaults(func=cmd_cleanup)
+
+    # batch
+    p_batch = sub.add_parser("batch", help="Run multiple CLI commands in one invocation")
+    p_batch.add_argument("--commands", required=True,
+                          help="Newline-separated CLI commands to execute sequentially")
+    p_batch.set_defaults(func=cmd_batch)
+
+    # exec
+    p_exec = sub.add_parser("exec", help="Execute Python code with coderlm helper functions")
+    p_exec.add_argument("--code", required=True,
+                         help="Python code with access to: search(), impl_(), callers(), tests(), grep(), symbols(), peek_file(), structure(), variables_list()")
+    p_exec.set_defaults(func=cmd_exec)
 
     return p
 

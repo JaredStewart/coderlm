@@ -181,6 +181,9 @@ Symbol extraction (functions, classes, structs, methods, etc.) is available for:
 | Go         | `.go`                         | tree-sitter  |
 | Java       | `.java`                       | tree-sitter  |
 | Scala      | `.scala`, `.sc`               | tree-sitter  |
+| Ruby       | `.rb`, `.rake`                | tree-sitter  |
+| PHP        | `.php`, `.phtml`              | tree-sitter  |
+| Zig        | `.zig`, `.zon`                | tree-sitter  |
 | SQL        | `.sql`                        | regex        |
 
 Languages with tree-sitter support produce full symbol tables (functions, classes, methods, callers, variables). SQL uses regex fallbacks for variable and definition detection. All other file types are indexed in the file tree and available for peek/grep/chunk operations, but do not produce symbols.
@@ -194,15 +197,15 @@ All endpoints are under `/api/v1`. Data endpoints require `X-Session-Id` header 
 | GET    | `/health`                   | No               | Server status (project/session counts) |
 | GET    | `/roots`                    | No               | List all registered projects (admin) |
 | GET    | `/sessions`                 | No               | List all active sessions (admin)     |
-| POST   | `/sessions`                 | No               | Create session with `{ "cwd": "..." }` |
+| POST   | `/sessions`                 | No               | Create session with `{ "cwd": "..." }` (response includes L1 structure) |
 | GET    | `/sessions/:id`             | No               | Get session info                     |
 | DELETE | `/sessions/:id`             | No               | Delete a session                     |
-| GET    | `/structure`                | Yes              | File tree with language breakdown    |
+| GET    | `/structure`                | Yes              | File tree (`?detail=0..3` for symbol summaries / signatures / source) |
 | POST   | `/structure/define`         | Yes              | Set file definition                  |
 | POST   | `/structure/redefine`       | Yes              | Update file definition               |
 | POST   | `/structure/mark`           | Yes              | Mark file type (test, docs, etc.)    |
 | GET    | `/symbols`                  | Yes              | List symbols (filter by kind/file)   |
-| GET    | `/symbols/search`           | Yes              | Search symbols by name               |
+| GET    | `/symbols/search`           | Yes              | Search symbols by name (`?file=` to scope to one file) |
 | POST   | `/symbols/define`           | Yes              | Set symbol definition                |
 | POST   | `/symbols/redefine`         | Yes              | Update symbol definition             |
 | GET    | `/symbols/implementation`   | Yes              | Get full source of a symbol          |
@@ -210,8 +213,24 @@ All endpoints are under `/api/v1`. Data endpoints require `X-Session-Id` header 
 | GET    | `/symbols/tests`            | Yes              | Find tests that reference a symbol   |
 | GET    | `/symbols/variables`        | Yes              | List local variables in a function   |
 | GET    | `/peek`                     | Yes              | Read a line range from a file        |
-| GET    | `/grep`                     | Yes              | Regex search across all files        |
+| GET    | `/grep`                     | Yes              | Regex search (`?scope=code` skips comments/strings; `?file=` to scope) |
 | GET    | `/chunk_indices`            | Yes              | Compute byte-range chunks for a file |
 | GET    | `/history`                  | Optional         | With session: session history. Without: all sessions (admin) |
+| POST   | `/annotations/save`         | Yes              | Persist annotations to `.coderlm/annotations.json` |
+| POST   | `/annotations/load`         | Yes              | Load annotations from disk           |
+| GET    | `/buffers`                  | Yes              | List named scratch buffers           |
+| POST   | `/buffers`                  | Yes              | Create buffer from raw content       |
+| POST   | `/buffers/from-file`        | Yes              | Create buffer from a file (or line range) |
+| POST   | `/buffers/from-symbol`      | Yes              | Create buffer from a symbol's source |
+| GET    | `/buffers/:name`            | Yes              | Get a buffer's full content          |
+| GET    | `/buffers/:name/peek`       | Yes              | Read a line range from a buffer      |
+| DELETE | `/buffers/:name`            | Yes              | Delete a buffer                      |
+| GET    | `/vars`                     | Yes              | List project-scoped JSON variables   |
+| POST   | `/vars`                     | Yes              | Set a JSON variable                  |
+| GET    | `/vars/:name`               | Yes              | Get a JSON variable                  |
+| DELETE | `/vars/:name`               | Yes              | Delete a JSON variable               |
+| GET    | `/subcall_results`          | Yes              | List sub-agent call results          |
+| POST   | `/subcall_results`          | Yes              | Append a sub-agent call result       |
+| DELETE | `/subcall_results`          | Yes              | Clear all sub-agent call results     |
 
-See `REPL_to_API.md` for the full mapping from REPL operations to curl commands.
+See `REPL_to_API.md` for the full mapping from REPL operations to curl commands, including request/response shapes for each endpoint.

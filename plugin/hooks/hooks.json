@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'ALWAYS invoke Skill(coderlm) as your FIRST action when working with code in Rust, Python, TypeScript, JavaScript, Go, Java, Scala, SQL. This includes summarizing, exploring, navigating, tracing, or understanding any codebase. CodeRLM indexes the entire project via tree-sitter and is faster and more accurate than Read/Grep/Glob/Bash for any code comprehension task. Do NOT delegate code tasks to subagents — use coderlm directly from the main agent.'"
+            "command": "echo 'When exploring code in supported languages (Rust, Python, TypeScript, JavaScript, Go, Java, Scala, Ruby, PHP, Zig), invoke Skill(coderlm) to use the tree-sitter index. For config files, markdown, small single-file reads, or unsupported languages, use Read/Grep/Glob directly. When using coderlm: CLI=\".claude/coderlm_state/coderlm_cli.py\". For one-off lookups use python3 $CLI search/impl/callers. For multiple lookups use python3 $CLI batch --commands \"...\" or python3 $CLI exec --code \"...\". IMPORTANT: Always include actual code extracts in your answer, not just prose descriptions.'"
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SubagentStart\",\"additionalContext\":\"Prefer the coderlm skill over Read/Grep/Glob for semantic code navigation in Rust, Python, TypeScript, JavaScript, Go, Java, Scala, SQL. Invoke it with Skill(coderlm). CodeRLM provides tree-sitter-indexed symbol lookup, call graphs, and cross-file references.\"}}'"
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SubagentStart\",\"additionalContext\":\"For code in supported languages (Rust, Python, TypeScript, JavaScript, Go, Java, Scala, Ruby, PHP, Zig), use the coderlm tree-sitter index. CLI=\\\".claude/coderlm_state/coderlm_cli.py\\\". For one-off: python3 $CLI search/impl/callers. For batching: python3 $CLI batch --commands \\\"...\\\" or python3 $CLI exec --code \\\"...\\\". Always include actual code extracts in answers, not just prose.\"}}'"
           }
         ]
       }

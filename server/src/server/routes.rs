@@ -8,7 +8,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::ops::{annotations, content, history, structure, symbol_ops};
+use crate::ops::{annotations, buffers, content, history, structure, subcalls, symbol_ops, variables};
 use crate::server::errors::AppError;
 use crate::server::session::Session;
 use crate::server::state::{AppState, Project};
@@ -86,6 +86,17 @@ pub fn build_routes(state: AppState) -> Router {
         // Annotations
         .route("/api/v1/annotations/save", post(save_annotations))
         .route("/api/v1/annotations/load", post(load_annotations))
+        // Buffers
+        .route("/api/v1/buffers", get(list_buffers).post(create_buffer))
+        .route("/api/v1/buffers/from-file", post(buffer_from_file))
+        .route("/api/v1/buffers/from-symbol", post(buffer_from_symbol))
+        .route("/api/v1/buffers/{name}", get(get_buffer).delete(delete_buffer))
+        .route("/api/v1/buffers/{name}/peek", get(peek_buffer))
+        // Variables
+        .route("/api/v1/vars", get(list_vars).post(set_var))
+        .route("/api/v1/vars/{name}", get(get_var).delete(delete_var))
+        // Subcall results
+        .route("/api/v1/subcall_results", get(get_subcall_results).post(store_subcall_result).delete(clear_subcall_results))
         .with_state(state)
 }
 
@@ -168,10 +179,20 @@ async fn create_session(
         let _ = annotations::load_annotations(&root, &ft, &st);
     });
 
+    // Return L1 structure in the session creation response
+    let structure_result = structure::get_structure_with_detail(
+        &project.root,
+        &project.file_tree,
+        &project.symbol_table,
+        0,
+        1,
+    );
+
     Ok(Json(json!({
         "session_id": id,
         "created_at": created_at.to_rfc3339(),
         "project": project.root.display().to_string(),
+        "structure": serde_json::to_value(&structure_result).unwrap_or(json!(null)),
     })))
 }
 
@@ -245,6 +266,8 @@ async fn list_sessions(State(state): State<AppState>) -> Json<Value> {
 #[derive(Deserialize)]
 struct StructureQuery {
     depth: Option<usize>,
+    /// Level-of-detail: 0=tree only, 1=+symbols, 2=+signatures, 3=+source
+    detail: Option<u8>,
 }
 
 async fn get_structure(
@@ -254,10 +277,25 @@ async fn get_structure(
 ) -> Result<Json<Value>, AppError> {
     let project = require_project(&state, &headers)?;
     let depth = params.depth.unwrap_or(0);
-    let result = structure::get_structure(&project.file_tree, depth);
-    let preview = format!("{} files", result.file_count);
-    record_history(&state, session_id(&headers).as_deref(), "GET", "/structure", &preview);
-    Ok(Json(serde_json::to_value(result).unwrap()))
+    let detail = params.detail.unwrap_or(0);
+
+    if detail > 0 {
+        let result = structure::get_structure_with_detail(
+            &project.root,
+            &project.file_tree,
+            &project.symbol_table,
+            depth,
+            detail,
+        );
+        let preview = format!("{} files (L{})", result.file_count, detail);
+        record_history(&state, session_id(&headers).as_deref(), "GET", "/structure", &preview);
+        Ok(Json(serde_json::to_value(result).unwrap()))
+    } else {
+        let result = structure::get_structure(&project.file_tree, depth);
+        let preview = format!("{} files", result.file_count);
+        record_history(&state, session_id(&headers).as_deref(), "GET", "/structure", &preview);
+        Ok(Json(serde_json::to_value(result).unwrap()))
+    }
 }
 
 #[derive(Deserialize)]
@@ -342,6 +380,7 @@ async fn list_symbols(
 struct SymbolSearchQuery {
     q: String,
     limit: Option<usize>,
+    file: Option<String>,
 }
 
 async fn search_symbols(
@@ -351,7 +390,7 @@ async fn search_symbols(
 ) -> Result<Json<Value>, AppError> {
     let project = require_project(&state, &headers)?;
     let limit = params.limit.unwrap_or(20);
-    let results = symbol_ops::search_symbols(&project.symbol_table, &params.q, limit);
+    let results = symbol_ops::search_symbols(&project.symbol_table, &params.q, limit, params.file.as_deref());
     let preview = format!("{} matches for '{}'", results.len(), params.q);
     record_history(&state, session_id(&headers).as_deref(), "GET", "/symbols/search", &preview);
     Ok(Json(json!({ "symbols": results, "count": results.len() })))
@@ -545,6 +584,8 @@ struct GrepQuery {
     context_lines: Option<usize>,
     /// Optional scope filter: "all" (default) or "code" (skip comments/strings).
     scope: Option<String>,
+    /// Optional file path filter to restrict grep to matching files.
+    file: Option<String>,
 }
 
 async fn grep_handler(
@@ -566,9 +607,10 @@ async fn grep_handler(
     let root = project.root.clone();
     let file_tree = project.file_tree.clone();
     let pattern = params.pattern.clone();
+    let file_filter = params.file.clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        content::grep_with_scope(&root, &file_tree, &pattern, max_matches, context_lines, scope)
+        content::grep_with_scope(&root, &file_tree, &pattern, max_matches, context_lines, scope, file_filter.as_deref())
     })
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?
@@ -672,4 +714,231 @@ async fn load_annotations(
     });
     record_history(&state, session_id(&headers).as_deref(), "POST", "/annotations/load", "loaded");
     Ok(Json(json!({ "ok": true, "loaded": summary })))
+}
+
+// ---------------------------------------------------------------------------
+// Buffers
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct CreateBufferBody {
+    name: String,
+    content: String,
+    description: Option<String>,
+}
+
+async fn create_buffer(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CreateBufferBody>,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    let buf = buffers::create_buffer(
+        &project.buffers,
+        &body.name,
+        &body.content,
+        body.description.as_deref(),
+    )
+    .map_err(AppError::BadRequest)?;
+    record_history(&state, session_id(&headers).as_deref(), "POST", "/buffers", &body.name);
+    Ok(Json(json!({ "ok": true, "buffer": buf.name, "size": buf.content.len() })))
+}
+
+#[derive(Deserialize)]
+struct BufferFromFileBody {
+    name: String,
+    file: String,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+}
+
+async fn buffer_from_file(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<BufferFromFileBody>,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    let buf = buffers::from_file(
+        &project.buffers,
+        &project.root,
+        &project.file_tree,
+        &body.name,
+        &body.file,
+        body.start_line,
+        body.end_line,
+    )
+    .map_err(AppError::BadRequest)?;
+    record_history(&state, session_id(&headers).as_deref(), "POST", "/buffers/from-file", &body.name);
+    Ok(Json(json!({ "ok": true, "buffer": buf.name, "size": buf.content.len() })))
+}
+
+#[derive(Deserialize)]
+struct BufferFromSymbolBody {
+    name: String,
+    symbol: String,
+    file: String,
+}
+
+async fn buffer_from_symbol(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<BufferFromSymbolBody>,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    let buf = buffers::from_symbol(
+        &project.buffers,
+        &project.root,
+        &project.symbol_table,
+        &body.name,
+        &body.symbol,
+        &body.file,
+    )
+    .map_err(AppError::BadRequest)?;
+    record_history(&state, session_id(&headers).as_deref(), "POST", "/buffers/from-symbol", &body.name);
+    Ok(Json(json!({ "ok": true, "buffer": buf.name, "size": buf.content.len() })))
+}
+
+async fn list_buffers(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    let list = buffers::list_buffers(&project.buffers);
+    Ok(Json(json!({ "buffers": list, "count": list.len() })))
+}
+
+#[derive(Deserialize)]
+struct BufferPath {
+    name: String,
+}
+
+async fn get_buffer(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(params): axum::extract::Path<BufferPath>,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    let buf = buffers::get_buffer(&project.buffers, &params.name)
+        .map_err(AppError::NotFound)?;
+    Ok(Json(serde_json::to_value(buf).unwrap()))
+}
+
+async fn delete_buffer(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(params): axum::extract::Path<BufferPath>,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    buffers::delete_buffer(&project.buffers, &params.name)
+        .map_err(AppError::NotFound)?;
+    Ok(Json(json!({ "deleted": true })))
+}
+
+#[derive(Deserialize)]
+struct PeekBufferQuery {
+    start: Option<usize>,
+    end: Option<usize>,
+}
+
+async fn peek_buffer(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(params): axum::extract::Path<BufferPath>,
+    Query(query): Query<PeekBufferQuery>,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    let start = query.start.unwrap_or(0);
+    let end = query.end.unwrap_or(100);
+    let content = buffers::peek_buffer(&project.buffers, &params.name, start, end)
+        .map_err(AppError::NotFound)?;
+    Ok(Json(json!({ "buffer": params.name, "content": content })))
+}
+
+// ---------------------------------------------------------------------------
+// Variables
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SetVarBody {
+    name: String,
+    value: serde_json::Value,
+}
+
+async fn set_var(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SetVarBody>,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    variables::set_var(&project.variables, &body.name, body.value);
+    record_history(&state, session_id(&headers).as_deref(), "POST", "/vars", &body.name);
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn list_vars(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    let list = variables::list_vars(&project.variables);
+    Ok(Json(json!({ "variables": list, "count": list.len() })))
+}
+
+#[derive(Deserialize)]
+struct VarPath {
+    name: String,
+}
+
+async fn get_var(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(params): axum::extract::Path<VarPath>,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    let val = variables::get_var(&project.variables, &params.name)
+        .map_err(AppError::NotFound)?;
+    Ok(Json(json!({ "name": params.name, "value": val })))
+}
+
+async fn delete_var(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(params): axum::extract::Path<VarPath>,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    variables::delete_var(&project.variables, &params.name)
+        .map_err(AppError::NotFound)?;
+    Ok(Json(json!({ "deleted": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Subcall Results
+// ---------------------------------------------------------------------------
+
+async fn store_subcall_result(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<subcalls::SubcallResult>,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    subcalls::store_result(&project.subcall_results, body);
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn get_subcall_results(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    let results = subcalls::get_results(&project.subcall_results);
+    Ok(Json(json!({ "results": results, "count": results.len() })))
+}
+
+async fn clear_subcall_results(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, AppError> {
+    let project = require_project(&state, &headers)?;
+    subcalls::clear_results(&project.subcall_results);
+    Ok(Json(json!({ "cleared": true })))
 }

@@ -8,6 +8,8 @@ use tracing::info;
 
 use crate::index::file_tree::FileTree;
 use crate::index::{walker, watcher};
+use crate::ops::buffers::Buffer;
+use crate::ops::subcalls::SubcallResult;
 use crate::server::errors::AppError;
 use crate::server::session::Session;
 use crate::symbols::{parser, SymbolTable};
@@ -21,6 +23,12 @@ pub struct Project {
     #[allow(dead_code)]
     pub watcher: Option<watcher::WatcherHandle>,
     pub last_active: Mutex<DateTime<Utc>>,
+    /// Named buffers for storing code snippets.
+    pub buffers: DashMap<String, Buffer>,
+    /// JSON variables for RLM state management.
+    pub variables: DashMap<String, serde_json::Value>,
+    /// Subcall results from recursive LLM queries.
+    pub subcall_results: Mutex<Vec<SubcallResult>>,
 }
 
 /// Shared application state, wrapped in Arc for axum handlers.
@@ -98,6 +106,9 @@ impl AppState {
             symbol_table: symbol_table.clone(),
             watcher: watcher_handle,
             last_active: Mutex::new(Utc::now()),
+            buffers: DashMap::new(),
+            variables: DashMap::new(),
+            subcall_results: Mutex::new(Vec::new()),
         });
 
         self.inner.projects.insert(canonical, project.clone());

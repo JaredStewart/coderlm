@@ -7,21 +7,21 @@
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 CLI="$PLUGIN_ROOT/skills/coderlm/scripts/coderlm_cli.py"
 STATE_FILE=".claude/coderlm_state/session.json"
+PORT="${CODERLM_PORT:-3000}"
 
 # Check server health
-if ! curl -s --max-time 2 http://127.0.0.1:3000/api/v1/health > /dev/null 2>&1; then
-    echo "[coderlm] Server not running. Start it with: cd server && cargo run -- serve" >&2
+if ! curl -s --max-time 2 "http://127.0.0.1:${PORT}/api/v1/health" > /dev/null 2>&1; then
+    echo "[coderlm] Server not running on port $PORT. Start it with: cd server && cargo run -- serve --port $PORT" >&2
     exit 0
 fi
 
-# Create a stable project-local symlink so the skill can find the CLI
-# regardless of whether the plugin is installed at user or project level
+# Create stable project-local symlink so the skill can find the script
 mkdir -p "$(dirname "$STATE_FILE")"
 ln -sf "$CLI" "$(dirname "$STATE_FILE")/coderlm_cli.py"
 
 # Auto-init if no active session
 if [ ! -f "$STATE_FILE" ]; then
-    if ! python3 "$CLI" init 2>&1; then
-        echo "[coderlm] Failed to initialize session. Run manually: python3 $CLI init" >&2
+    if ! python3 "$CLI" init --port "$PORT" 2>&1; then
+        echo "[coderlm] Failed to initialize session. Run manually: python3 $CLI init --port $PORT" >&2
     fi
 fi

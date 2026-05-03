@@ -15,6 +15,7 @@ pub enum SymbolKind {
     Type,
     Module,
     Import,
+    Test,
     Other,
 }
 
@@ -33,6 +34,7 @@ impl SymbolKind {
             "type" => Some(SymbolKind::Type),
             "module" | "mod" => Some(SymbolKind::Module),
             "import" | "use" => Some(SymbolKind::Import),
+            "test" => Some(SymbolKind::Test),
             _ => None,
         }
     }
