@@ -9,6 +9,6 @@ STATE_FILE=".claude/coderlm_state/session.json"
 PORT="${CODERLM_PORT:-3000}"
 
 if [ -f "$STATE_FILE" ] && curl -s --max-time 2 "http://127.0.0.1:${PORT}/api/v1/health" > /dev/null 2>&1; then
-    python3 "$CLI" save-annotations 2>/dev/null || true
-    python3 "$CLI" cleanup 2>/dev/null || true
+    python3 "$CLI" save-annotations >/dev/null 2>&1 || true
+    python3 "$CLI" cleanup >/dev/null 2>&1 || true
 fi
