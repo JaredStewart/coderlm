@@ -19,6 +19,17 @@ fi
 mkdir -p "$(dirname "$STATE_FILE")"
 ln -sf "$CLI" "$(dirname "$STATE_FILE")/coderlm_cli.py"
 
+# Drop the state file if the session it names is gone. Sessions live in
+# server memory, so a server restart invalidates every stored id while the
+# file on disk survives. Without this the file is never replaced and every
+# later call 404s silently.
+if [ -f "$STATE_FILE" ]; then
+    SID=$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$STATE_FILE" | head -1)
+    if [ -z "$SID" ] || ! curl -sf -o /dev/null --max-time 2 "http://127.0.0.1:${PORT}/api/v1/sessions/${SID}"; then
+        rm -f "$STATE_FILE"
+    fi
+fi
+
 # Auto-init if no active session
 if [ ! -f "$STATE_FILE" ]; then
     if ! python3 "$CLI" init --port "$PORT" 2>&1; then
